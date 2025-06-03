@@ -1,0 +1,298 @@
+format longG;
+% IOPs
+x0 = 21.198;
+y0 = 2.652;
+foc = 2460.886;
+k1 = 0.5557257;
+k2 = -0.030663632;
+k3 = 0.7523963;
+p1 = 3.6481566;
+p2 = 1.7843044;
+iw = 4384;
+ih = 3288;
+
+% GCPs (X, Y, Z)
+XYZ = [
+    913063.024, 578008.433, 191.558;  % GCP1
+    913107.995, 577959.698, 189.633;  % GCP2
+    913156.291, 577962.726, 186.894;  % GCP3
+    913095.616, 577922.560, 229.251;  % GCP4
+    913066.749, 578011.158, 191.563;  % GCP5
+    913168.020, 577943.538, 182.656   % GCP6
+];
+
+% Image observations in pixels
+c = [2440.1, 1586.8, 2152.1, 633.8, 2516.3,  387.8];
+r = [1261.2, 1388.1, 1822.2, 426.4, 1261.2, 2813.6];
+
+% Convert from (c,r) to (x,y)
+x = c - (iw/2);
+y = (ih/2) - r;
+
+
+
+% Para for refining
+pp1 = [x(1), y(1), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih];
+pp2 = [x(2), y(2), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih];
+pp3 = [x(3), y(3), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih];
+pp4 = [x(4), y(4), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih];
+pp5 = [x(5), y(5), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih];
+pp6 = [x(6), y(6), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih];
+
+
+% Refine points
+[xpp(1), ypp(1)] = image_coor_refine(pp1);
+[xpp(2), ypp(2)] = image_coor_refine(pp2);
+[xpp(3), ypp(3)] = image_coor_refine(pp3);
+[xpp(4), ypp(4)] = image_coor_refine(pp4);
+[xpp(5), ypp(5)] = image_coor_refine(pp5);
+[xpp(6), ypp(6)] = image_coor_refine(pp6);
+
+
+% Initial EOPs
+omega = 1.0;
+phi = 1.0;
+kappa = 0.5;
+XL = 913190;
+YL = 577950;
+ZL = 190;
+eop = [omega, phi, kappa;
+       XL, YL, ZL];
+
+
+fprintf('Initial EOPs:\n')
+fprintf('omega = %f, phi = %f, kappa = %f\n', eop(1,1), eop(1,2), eop(1,3))
+fprintf('XL = %f, YL = %f, ZL = %f\n\n', eop(2,1), eop(2,2), eop(2,3))
+
+
+
+threshold = 1e-5;
+keep_go = 1;
+niter = 0;
+
+
+
+
+while (keep_go == 1)
+    niter = niter + 1;
+    
+    % Rotation matrix
+    M = rotationmatrix(eop(1,1), eop(1,2), eop(1,3));
+    
+    % Partial derivatives
+    B1 = resection_partial_derivatives(foc, eop, M, xpp(1), ypp(1), XYZ(1,:));
+    B2 = resection_partial_derivatives(foc, eop, M, xpp(2), ypp(2), XYZ(2,:));
+    B3 = resection_partial_derivatives(foc, eop, M, xpp(3), ypp(3), XYZ(3,:));
+    B4 = resection_partial_derivatives(foc, eop, M, xpp(4), ypp(4), XYZ(4,:));
+    B5 = resection_partial_derivatives(foc, eop, M,xpp(5),  ypp(5),XYZ(5,:));
+    B6 = resection_partial_derivatives(foc, eop, M,xpp(6),  ypp(6),XYZ(6,:));
+    B = [B1; B2; B3; B4; B5; B6];
+    
+    % Condition equations
+    F1 = collin2(foc, eop, M, xpp(1), ypp(1), XYZ(1,:));
+    F2 = collin2(foc, eop, M, xpp(2), ypp(2), XYZ(2,:));
+    F3 = collin2(foc, eop, M, xpp(3), ypp(3), XYZ(3,:));
+    F4 = collin2(foc, eop, M, xpp(4), ypp(4), XYZ(4,:));
+    F5 = collin2(foc,eop,M,xpp(5),ypp(5),XYZ(5,:));
+    F6 = collin2(foc,eop,M,xpp(6),ypp(6),XYZ(6,:));
+    f = -[F1; F2; F3; F4; F5; F6];
+    
+    % Parameter changes
+    delta = (B' * B) \ (B' * f);
+    
+    % Update parameters
+    eop(1,1) = eop(1,1) + delta(1);
+    eop(1,2) = eop(1,2) + delta(2);
+    eop(1,3) = eop(1,3) + delta(3);
+    eop(2,1) = eop(2,1) + delta(4);
+    eop(2,2) = eop(2,2) + delta(5);
+    eop(2,3) = eop(2,3) + delta(6);
+    
+    % dot to show progress
+    fprintf('.')
+    
+    % Check if we're done
+    if max(abs(delta)) < threshold
+        keep_go = 0;
+        fprintf('\nConverged after %d iterations!\n\n', niter)
+        fprintf('Last delta values:\n')
+        fprintf('%f\n', delta)
+        
+        % Residuals
+        residuals = f - B*delta;
+        
+        vx = [residuals(1); residuals(3); residuals(5); residuals(7); residuals(9); residuals(11)];
+        vy = [residuals(2); residuals(4); residuals(6); residuals(8); residuals(10); residuals(12); ];
+        
+        fprintf('Residuals:\n')
+        for i = 1:6
+            fprintf('Point %d: vx = %f, vy = %f\n', i, vx(i), vy(i))
+        end
+        
+        % Adjusted coords
+        x_adj = xpp' + vx;
+        y_adj = ypp' + vy;
+        
+        fprintf('\nAdjusted image coordinates:\n')
+        for i = 1:6
+            fprintf('Point %d: x_adj = %f, y_adj = %f\n', i, x_adj(i), y_adj(i))
+        end
+    end
+end
+
+% Final result
+fprintf('\nFinal EOPs:\n')
+fprintf('omega = %f rad\n', eop(1,1))
+fprintf('phi = %f rad\n', eop(1,2))
+fprintf('kappa = %f rad\n', eop(1,3))
+fprintf('XL = %f m\n', eop(2,1))
+fprintf('YL = %f m\n', eop(2,2))
+fprintf('ZL = %f m\n', eop(2,3))
+
+
+
+fprintf('\n-------------------------------------\n')
+fprintf('EXTRA CREDIT PART\n')
+fprintf('-------------------------------------\n\n')
+
+
+
+
+% IOPs
+x0  = 21.198;  y0  = 2.652;  foc = 2460.886;
+k1  = 0.5557257;  k2 = -0.030663632;  k3 = 0.7523963;
+p1  = 3.6481566;  p2 = 1.7843044;
+iw  = 4384;  ih  = 3288;
+
+% GCPs (XYZ stays the same)
+XYZ = [
+    913063.024, 578008.433, 191.558;
+    913107.995, 577959.698, 189.633;
+    913156.291, 577962.726, 186.894;
+    913095.616, 577922.560, 229.251;
+    913066.749, 578011.158, 191.563;
+    913168.020, 577943.538, 182.656
+];
+
+% Image 1 (now has all 6 points)
+c1 = [2440.1, 1586.8, 2152.1, 633.8, 2516.3, 391.667];
+r1 = [1261.2, 1388.1, 1822.2, 426.4, 1261.2, 2815.955];
+
+% (x, y)
+x1 = c1 - (iw/2);
+y1 = (ih/2) - r1;
+
+% Refined points
+[xpp1(1), ypp1(1)] = image_coor_refine([x1(1), y1(1), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp1(2), ypp1(2)] = image_coor_refine([x1(2), y1(2), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp1(3), ypp1(3)] = image_coor_refine([x1(3), y1(3), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp1(4), ypp1(4)] = image_coor_refine([x1(4), y1(4), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp1(5), ypp1(5)] = image_coor_refine([x1(5), y1(5), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp1(6), ypp1(6)] = image_coor_refine([x1(6), y1(6), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+
+% Initial EOPs
+eop1 = [1.0, 1.0, 0.5; 913190, 577950, 190];
+threshold = 1e-5;
+keep_going1 = 1;
+
+fprintf('\n--- Solving for Image 1 with 6 points ---\n');
+while keep_going1 == 1
+    M1 = rotationmatrix(eop1(1,1), eop1(1,2), eop1(1,3));
+    
+    B1 = resection_partial_derivatives(foc, eop1, M1, xpp1(1), ypp1(1), XYZ(1,:));
+    B2 = resection_partial_derivatives(foc, eop1, M1, xpp1(2), ypp1(2), XYZ(2,:));
+    B3 = resection_partial_derivatives(foc, eop1, M1, xpp1(3), ypp1(3), XYZ(3,:));
+    B4 = resection_partial_derivatives(foc, eop1, M1, xpp1(4), ypp1(4), XYZ(4,:));
+    B5 = resection_partial_derivatives(foc, eop1, M1, xpp1(5), ypp1(5), XYZ(5,:));
+    B6 = resection_partial_derivatives(foc, eop1, M1, xpp1(6), ypp1(6), XYZ(6,:));
+    B = [B1; B2; B3; B4; B5; B6];
+    
+    F1 = collin2(foc, eop1, M1, xpp1(1), ypp1(1), XYZ(1,:));
+    F2 = collin2(foc, eop1, M1, xpp1(2), ypp1(2), XYZ(2,:));
+    F3 = collin2(foc, eop1, M1, xpp1(3), ypp1(3), XYZ(3,:));
+    F4 = collin2(foc, eop1, M1, xpp1(4), ypp1(4), XYZ(4,:));
+    F5 = collin2(foc, eop1, M1, xpp1(5), ypp1(5), XYZ(5,:));
+    F6 = collin2(foc, eop1, M1, xpp1(6), ypp1(6), XYZ(6,:));
+    f = -[F1; F2; F3; F4; F5; F6];
+    
+    delta = (B' * B) \ (B' * f);
+    eop1(1,:) = eop1(1,:) + delta(1:3)';
+    eop1(2,:) = eop1(2,:) + delta(4:6)';
+    
+    if max(abs(delta)) < threshold
+        keep_going1 = 0;
+        fprintf('Image 1 converged.\n');
+    end
+end
+
+
+c2 = [4186.249, 3427.3, 3565.44, 2670.4, 4223.0, 2361.1];
+r2 = [1730.033, 1792.7, 2517.29, 694.4, 1743.2, 2817.9];
+
+x2 = c2 - iw/2;
+y2 = (ih/2) - r2;
+
+[xpp2(1), ypp2(1)] = image_coor_refine([x2(1), y2(1), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp2(2), ypp2(2)] = image_coor_refine([x2(2), y2(2), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp2(3), ypp2(3)] = image_coor_refine([x2(3), y2(3), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp2(4), ypp2(4)] = image_coor_refine([x2(4), y2(4), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp2(5), ypp2(5)] = image_coor_refine([x2(5), y2(5), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+[xpp2(6), ypp2(6)] = image_coor_refine([x2(6), y2(6), x0, y0, foc, k1, k2, k3, p1, p2, iw, ih]);
+
+eop2 = [-1.0, -1.0, 2.0; 913190, 577950, 200];
+threshold = 1e-5;
+keep_going2 = 1;
+
+
+while keep_going2 == 1
+    M2 = rotationmatrix(eop2(1,1), eop2(1,2), eop2(1,3));
+    
+    B1 = resection_partial_derivatives(foc, eop2, M2, xpp2(1), ypp2(1), XYZ(1,:));
+    B2 = resection_partial_derivatives(foc, eop2, M2, xpp2(2), ypp2(2), XYZ(2,:));
+    B3 = resection_partial_derivatives(foc, eop2, M2, xpp2(3), ypp2(3), XYZ(3,:));
+    B4 = resection_partial_derivatives(foc, eop2, M2, xpp2(4), ypp2(4), XYZ(4,:));
+    B5 = resection_partial_derivatives(foc, eop2, M2, xpp2(5), ypp2(5), XYZ(5,:));
+    B6 = resection_partial_derivatives(foc, eop2, M2, xpp2(6), ypp2(6), XYZ(6,:));
+    B = [B1; B2; B3; B4; B5; B6];
+    
+    F1 = collin2(foc, eop2, M2, xpp2(1), ypp2(1), XYZ(1,:));
+    F2 = collin2(foc, eop2, M2, xpp2(2), ypp2(2), XYZ(2,:));
+    F3 = collin2(foc, eop2, M2, xpp2(3), ypp2(3), XYZ(3,:));
+    F4 = collin2(foc, eop2, M2, xpp2(4), ypp2(4), XYZ(4,:));
+    F5 = collin2(foc, eop2, M2, xpp2(5), ypp2(5), XYZ(5,:));
+    F6 = collin2(foc, eop2, M2, xpp2(6), ypp2(6), XYZ(6,:));
+    f = -[F1; F2; F3; F4; F5; F6];
+    
+    delta = (B' * B) \ (B' * f);
+    eop2(1,:) = eop2(1,:) + delta(1:3)';
+    eop2(2,:) = eop2(2,:) + delta(4:6)';
+    
+    if max(abs(delta)) < threshold
+        keep_going2 = 0;
+          fprintf('\nConverged after %d iterations!\n\n', niter)
+        fprintf('Last delta values:\n')
+        fprintf('%f\n', delta)
+    end
+end
+
+
+
+fprintf('\n-------------------------------------\n');
+fprintf('eop final result\n');
+fprintf('-------------------------------------\n\n');
+
+fprintf('Image 1 Final EOPs:\n');
+fprintf('omega = %f rad\n',  eop1(1,1));
+fprintf('phi   = %f rad\n',  eop1(1,2));
+fprintf('kappa = %f rad\n',  eop1(1,3));
+fprintf('XL    = %f m\n',    eop1(2,1));
+fprintf('YL    = %f m\n',    eop1(2,2));
+fprintf('ZL    = %f m\n\n',  eop1(2,3));
+
+fprintf('Image 2 Final EOPs:\n');
+fprintf('omega = %f rad\n',  eop2(1,1));
+fprintf('phi   = %f rad\n',  eop2(1,2));
+fprintf('kappa = %f rad\n',  eop2(1,3));
+fprintf('XL    = %f m\n',    eop2(2,1));
+fprintf('YL    = %f m\n',    eop2(2,2));
+fprintf('ZL    = %f m\n',    eop2(2,3));
